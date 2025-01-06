@@ -1,0 +1,28 @@
+name: detectron2_env
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  # Core packages
+  - python=3.10
+  - pip
+
+  # Pin NumPy <2 to avoid NumPy 2.x incompatibility
+  - numpy=1.23.5
+
+  # PyTorch 1.11 + CUDA 11.3 (plus torchvision & torchaudio)
+  - pytorch=1.11.0
+  - torchvision=0.12.0
+  - torchaudio=0.11.0
+  - cudatoolkit=11.3
+
+  # OpenCV for cv2 import
+  - opencv
+
+  # Additional or optional packages (uncomment if needed):
+  # - jupyterlab
+  # - ipykernel
+
+  # Use pip for the Detectron2 wheel that matches Torch 1.11 + CUDA 11.3
+  - pip:
+    - detectron2 -f https://dl.fbaipublicfiles.com/detectron2/wheels/cu113/torch1.11/index.html
