@@ -1,33 +1,46 @@
-from transformers import AutoImageProcessor, Mask2FormerForUniversalSegmentation
-import torch
 import os
 import cv2
+import torch
+import random
 import numpy as np
 import matplotlib.pyplot as plt
+from PIL import Image
+from hyperparams import LABEL_NAMES
+from typing import List, Dict, Tuple
 from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
+from transformers import AutoImageProcessor, Mask2FormerForUniversalSegmentation
 
-
-# Define label names for your dataset
-LABEL_NAMES =  {0: 'Wall', 
-                1: 'Painted Wall', 
-                2: 'Tail', 
-                3: 'Wallpaper', 
-                4: 'Wood'}
 
 def load_predictor():
     """
     Configures and loads the Detectron2 model for instance segmentation on CPU.
-    """
-    cfg = get_cfg()
-    cfg.merge_from_file("detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml")
-    cfg.MODEL.WEIGHTS = "model_final.pth"  # Path to the trained model weights
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7  # Confidence threshold
-    cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(LABEL_NAMES)  # Number of classes in the dataset
-    cfg.MODEL.DEVICE = "cpu"  # Set device to CPU
-    return DefaultPredictor(cfg)
 
-import random
+    Raises:
+        FileNotFoundError: If configuration or weights file is not found.
+        ValueError: If LABEL_NAMES is not defined or empty.
+
+    Returns:
+        DefaultPredictor: Configured Detectron2 predictor.
+    """
+    try:
+        # Validate LABEL_NAMES
+        if not isinstance(LABEL_NAMES, dict) or not LABEL_NAMES:
+            raise ValueError("LABEL_NAMES must be a non-empty dictionary.")
+
+        # Initialize configuration
+        cfg = get_cfg()
+        cfg.merge_from_file("detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml")
+        cfg.MODEL.WEIGHTS = "model_final.pth"  # Path to the trained model weights
+        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7  # Confidence threshold
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(LABEL_NAMES)  # Number of classes in the dataset
+        cfg.MODEL.DEVICE = "cpu"  # Set device to CPU
+
+        return DefaultPredictor(cfg)
+    except FileNotFoundError as e:
+        raise FileNotFoundError("Configuration or weights file not found. Ensure all required files are in place.") from e
+    except Exception as e:
+        raise RuntimeError(f"An unexpected error occurred while loading the predictor: {e}") from e
 
 def run_detectron(original_image, wall_images, wall_masks=None):
     """
@@ -93,22 +106,107 @@ def run_detectron(original_image, wall_images, wall_masks=None):
 
 
 
-def loading_model(model_name:str):
+def loading_model(model_name:str)->Tuple[any]:
     processor = AutoImageProcessor.from_pretrained(model_name)
     model = Mask2FormerForUniversalSegmentation.from_pretrained(model_name)
 
     return model, processor
 
+def post_proces_results(
+    model: Mask2FormerForUniversalSegmentation,
+    processor: AutoImageProcessor,
+    image_path: str,
+    threshold: float = 0.5
+) -> Tuple[torch.Tensor, List[Dict], Dict[int, str]]:
+    """
+    Performs inference and post-processes panoptic segmentation results using a given model and processor.
 
-def filter_wall_segments(segments_info, segmentation, id2label):
+    Parameters:
+        model (Mask2FormerForUniversalSegmentation): Pre-trained segmentation model.
+        processor (AutoImageProcessor): Processor for image preprocessing and postprocessing.
+        image_path (str): Path to the input image.
+        threshold (float, optional): Threshold for post-processing. Defaults to 0.5.
+
+    Returns:
+        Tuple[torch.Tensor, List[Dict], Dict[int, str]]: 
+            - segmentation: Segmentation map as a torch.Tensor.
+            - segments_info: Metadata for each segment.
+            - id2label: Label ID to name mapping.
+
+    Raises:
+        ValueError: If the image file is not found, corrupted, or if invalid parameters are provided.
+    """
+    try:        
+        # Load and verify image
+        image = Image.open(image_path)
+        image.verify()  # Ensure the image is not corrupted
+        image = Image.open(image_path)  # Reload the image after verification
+    except FileNotFoundError:
+        raise ValueError(f"Image not found at {image_path}. Please provide a valid path.")
+    except Exception as e:
+        raise ValueError(f"Failed to open image: {e}")
+
+    # Preprocess image
+    inputs = processor(images=image, return_tensors="pt")
+
+    # Model inference
+    with torch.inference_mode():  # Use inference_mode for faster inference
+        outputs = model(**inputs)
+
+    # Post-process results
+    results = processor.post_process_panoptic_segmentation(
+        outputs, target_sizes=[image.size[::-1]], threshold=threshold
+    )[0]
+
+    segmentation = results["segmentation"].cpu()
+    segments_info = results["segments_info"]
+
+    # Retrieve label mapping from the model configuration
+    id2label = model.config.id2label
+
+    return segmentation, segments_info, id2label
+
+
+
+def filter_wall_segments(
+    segments_info: List[Dict],
+    segmentation: torch.Tensor,
+    id2label: Dict[int, str]
+) -> Tuple[List[Dict], torch.Tensor]:
     """
     Filters segments containing 'wall' in their labels.
+
+    Parameters:
+        segments_info (List[Dict]): List of dictionaries containing segment metadata.
+        segmentation (torch.Tensor): Segmentation map with segment IDs.
+        id2label (Dict[int, str]): Mapping from label IDs to label names.
+
+    Returns:
+        Tuple[List[Dict], torch.Tensor]: 
+            - A list of segment dictionaries for 'wall' segments.
+            - A segmentation mask (torch.Tensor) with 'wall' segments highlighted.
+
+    Raises:
+        ValueError: If `segments_info`, `segmentation`, or `id2label` are invalid or empty.
     """
+    # Validate inputs
+    if not isinstance(segments_info, list) or not all(isinstance(seg, dict) for seg in segments_info):
+        raise ValueError("segments_info must be a list of dictionaries.")
+    if not isinstance(segmentation, torch.Tensor):
+        raise ValueError("segmentation must be a torch.Tensor.")
+    if not isinstance(id2label, dict) or not id2label:
+        raise ValueError("id2label must be a non-empty dictionary.")
+
+    # Initialize outputs
     wall_segments = []
     wall_segmentation = torch.zeros_like(segmentation)  # Empty mask for wall segments
 
+    # Filter segments containing 'wall'
     for segment in segments_info:
-        segment_label_id = segment["label_id"]
+        segment_label_id = segment.get("label_id")
+        if segment_label_id is None or segment_label_id not in id2label:
+            continue  # Skip if label_id is missing or invalid
+
         segment_label = id2label[segment_label_id]
 
         # Check if "wall" is in the label

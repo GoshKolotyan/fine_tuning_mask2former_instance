@@ -1,12 +1,13 @@
 import torch
-from collections import defaultdict
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib import cm
-from typing import List
 import transformers
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 from PIL import Image
+from typing import List
+from matplotlib import cm
+from collections import defaultdict
+
 
 # Function to visualize panoptic segmentation
 def draw_panoptic_segmentation(segmentation: torch.Tensor,
@@ -34,10 +35,9 @@ def draw_panoptic_segmentation(segmentation: torch.Tensor,
     ax.axis("off")
     plt.show()
 
-import numpy as np
-import torch
-
-def get_wall_segment_images(image, wall_segments, segmentation_map):
+def get_wall_segment_images(image:Image, 
+                            wall_segments:List, 
+                            segmentation_map:torch.Tensor)->List[torch.Tensor]:
     """
     Extracts individual wall segment images with all other parts blacked out.
 
