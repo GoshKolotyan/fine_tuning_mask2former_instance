@@ -11,98 +11,104 @@ from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 from transformers import AutoImageProcessor, Mask2FormerForUniversalSegmentation
 
+class DetectronInference:
+    def __init__(self, model_name: str, 
+                original_image: np.ndarray, 
+                wall_images: List[np.ndarray], 
+                wall_masks: Optional[List[np.ndarray]] = None):
+        """
+        Initializes the DetectronInference class.
 
-def load_predictor():
-    """
-    Configures and loads the Detectron2 model for instance segmentation on CPU.
+        Parameters:
+            model_name (str): Name of the Detectron2 model.
+            original_image (np.ndarray): Original input image in BGR format.
+            wall_images (List[np.ndarray]): List of wall segment images in BGR format.
+            wall_masks (List[np.ndarray], optional): List of wall masks for each wall segment.
+        """
+        self.model_name = model_name
+        self.original_image = original_image
+        self.wall_images = wall_images
+        self.wall_masks = wall_masks
 
-    Raises:
-        FileNotFoundError: If configuration or weights file is not found.
-        ValueError: If LABEL_NAMES is not defined or empty.
+    def load_predictor(self):
+        """
+        Configures and loads the Detectron2 model for instance segmentation on CPU.
 
-    Returns:
-        DefaultPredictor: Configured Detectron2 predictor.
-    """
-    try:
-        # Validate LABEL_NAMES
-        if not isinstance(LABEL_NAMES, dict) or not LABEL_NAMES:
-            raise ValueError("LABEL_NAMES must be a non-empty dictionary.")
+        Raises:
+            FileNotFoundError: If configuration or weights file is not found.
+            ValueError: If LABEL_NAMES is not defined or empty.
 
-        # Initialize configuration
-        cfg = get_cfg()
-        cfg.merge_from_file("detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml")
-        cfg.MODEL.WEIGHTS = "model_final.pth"  # Path to the trained model weights
-        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7  # Confidence threshold
-        cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(LABEL_NAMES)  # Number of classes in the dataset
-        cfg.MODEL.DEVICE = "cpu"  # Set device to CPU
+        Returns:
+            DefaultPredictor: Configured Detectron2 predictor.
+        """
+        try:
+            # Validate LABEL_NAMES
+            if not isinstance(LABEL_NAMES, dict) or not LABEL_NAMES:
+                raise ValueError("LABEL_NAMES must be a non-empty dictionary.")
 
-        return DefaultPredictor(cfg)
-    except FileNotFoundError as e:
-        raise FileNotFoundError("Configuration or weights file not found. Ensure all required files are in place.") from e
-    except Exception as e:
-        raise RuntimeError(f"An unexpected error occurred while loading the predictor: {e}") from e
+            # Initialize configuration
+            cfg = get_cfg()
+            cfg.merge_from_file("detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml")
+            cfg.MODEL.WEIGHTS = "model_final.pth"
+            cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(LABEL_NAMES)
+            cfg.MODEL.DEVICE = "cpu"
 
-def run_detectron(original_image, wall_images, wall_masks=None):
-    """
-    Runs Detectron2 on individual wall segment images, visualizes predictions with random colors and labels.
+            return DefaultPredictor(cfg)
+        except FileNotFoundError as e:
+            raise FileNotFoundError("Configuration or weights file not found.") from e
+        except Exception as e:
+            raise RuntimeError(f"An error occurred while loading the predictor: {e}") from e
 
-    Parameters:
-        original_image (numpy.ndarray): Original input image in BGR format.
-        wall_images (list): List of wall segment images (numpy arrays in BGR format).
-        wall_masks (list, optional): List of wall masks corresponding to each wall image.
-                                     If None, no additional mask is applied.
-    """
-    predictor = load_predictor()
+    def run_detectron(self):
+        """
+        Runs Detectron2 on wall segment images, visualizes predictions with random colors and labels.
+        """
+        predictor = self.load_predictor()
 
-    # Create a copy of the original image for overlay
-    visualization_image = original_image.copy()
+        visualization_image = self.original_image.copy()
 
-    for idx, wall_image in enumerate(wall_images):
-        # Get the corresponding wall mask if provided
-        wall_mask = wall_masks[idx] if wall_masks is not None else None
+        for idx, wall_image in enumerate(self.wall_images):
+            wall_mask = self.wall_masks[idx] if self.wall_masks is not None else None
 
-        # Predictions
-        outputs = predictor(wall_image)
-        instances = outputs["instances"].to("cpu")
-        masks = instances.pred_masks.numpy()  # Binary masks for each instance
-        labels = instances.pred_classes.numpy()  # Class indices for each instance
+            outputs = predictor(wall_image)
+            instances = outputs["instances"].to("cpu")
+            masks = instances.pred_masks.numpy()
+            labels = instances.pred_classes.numpy()
 
-        # Overlay each mask onto the original image
-        for mask, label in zip(masks, labels):
-            # Combine with wall mask if provided
-            if wall_mask is not None:
-                mask = mask & wall_mask
+            for mask, label in zip(masks, labels):
+                if wall_mask is not None:
+                    mask = mask & wall_mask
 
-            # Generate a random color
-            random_color = np.array([random.randint(0, 255) for _ in range(3)], dtype=np.uint8)
+                random_color = np.array([random.randint(0, 255) for _ in range(3)], dtype=np.uint8)
+                visualization_image[mask] = (0.7 * visualization_image[mask] + 0.3 * random_color).astype(np.uint8)
 
-            # Apply the mask with a random color
-            visualization_image[mask] = (
-                0.7 * visualization_image[mask] + 0.3 * random_color
-            ).astype(np.uint8)
+                coords = np.column_stack(np.where(mask))
+                if coords.size > 0:
+                    centroid = coords.mean(axis=0).astype(int)
+                    cv2.putText(
+                        visualization_image,
+                        LABEL_NAMES.get(label, f"Class {label}"),
+                        (centroid[1], centroid[0]),
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=0.5,
+                        color=(255, 255, 255),
+                        thickness=1,
+                        lineType=cv2.LINE_AA,
+                    )
 
-            # Add label text to the centroid of the mask
-            coords = np.column_stack(np.where(mask))
-            if coords.size > 0:
-                centroid = coords.mean(axis=0).astype(int)
-                cv2.putText(
-                    visualization_image,
-                    LABEL_NAMES.get(label, f"Class {label}"),
-                    (centroid[1], centroid[0]),  # (x, y)
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=0.5,
-                    color=(255, 255, 255),  # White text
-                    thickness=1,
-                    lineType=cv2.LINE_AA,
-                )
-
-
-    # Display the original image with overlayed masks and labels
-    plt.figure(figsize=(10, 10))
-    plt.imshow(cv2.cvtColor(visualization_image, cv2.COLOR_BGR2RGB))  # Convert BGR to RGB
-    plt.title("Detected Masks with Random Colors and Labels")
-    plt.axis("off")
-    plt.show()
+        plt.figure(figsize=(10, 10))
+        plt.imshow(cv2.cvtColor(visualization_image, cv2.COLOR_BGR2RGB))
+        plt.title("Detected Masks with Random Colors and Labels")
+        plt.axis("off")
+        plt.show()
+class Mask2Former_Inferance:
+    def __init__():
+        pass
+    def loading_model(self):
+        pass
+    def post_proces_results(self):
+        pass
 
 
 
