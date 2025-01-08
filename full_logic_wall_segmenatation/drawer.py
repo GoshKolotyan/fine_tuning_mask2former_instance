@@ -1,73 +1,86 @@
-import torch
-import transformers
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from PIL import Image
-from typing import List
-from matplotlib import cm
+from typing import List, Dict
 from collections import defaultdict
+import numpy as np
+import torch
+from PIL import Image
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from matplotlib import patches as mpatches
 
 
-# Function to visualize panoptic segmentation
-def draw_panoptic_segmentation(segmentation: torch.Tensor,
-                               model: transformers.models.mask2former.modeling_mask2former.Mask2FormerForUniversalSegmentation,
-                               segments_info: List )-> None:
-    # Get the color map
-    viridis = cm.get_cmap('viridis', torch.max(segmentation).item() + 1)
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.imshow(segmentation, cmap=viridis)
-    instances_counter = defaultdict(int)
-    handles = []
-
-    # For each segment, create a legend entry
-    for segment in segments_info:
-        segment_id = segment['id']
-        segment_label_id = segment['label_id']
-        segment_label = model.config.id2label[segment_label_id]
-        label = f"{segment_label}-{instances_counter[segment_label_id]}"
-        instances_counter[segment_label_id] += 1
-        color = viridis(segment_id / torch.max(segmentation).item())
-        handles.append(mpatches.Patch(color=color, label=label))
-
-    # Add the legend
-    ax.legend(handles=handles, loc="upper right", bbox_to_anchor=(1.35, 1))
-    ax.axis("off")
-    plt.show()
-
-def get_wall_segment_images(image:Image, 
-                            wall_segments:List, 
-                            segmentation_map:torch.Tensor)->List[torch.Tensor]:
+class Drawer:
     """
-    Extracts individual wall segment images with all other parts blacked out.
+    A utility class for visualizing panoptic segmentation results and extracting individual wall segment images.
 
-    Parameters:
-        image (PIL.Image or np.ndarray): Original input image.
-        wall_segments (list): List of wall segment dictionaries.
-        segmentation_map (torch.Tensor): Segmentation map with segment IDs.
-
-    Returns:
-        list: List of images (numpy arrays) for each wall segment.
+    Attributes:
+        image (np.ndarray): Original input image.
+        segmentation (torch.Tensor): Segmentation map with segment IDs.
+        label_dict (Dict[int, str]): Dictionary mapping label IDs to label names.
+        segments_info (List[Dict]): List of dictionaries with segment metadata.
     """
-    # Convert image to numpy array if it's a PIL image
-    if isinstance(image, Image.Image):
-        image = np.array(image)
 
-    # List to store individual wall images
-    wall_images = []
+    def __init__(
+        self,
+        image: Image.Image,
+        segmentation: torch.Tensor,
+        label_dict: Dict[int, str],
+        segments_info: List[Dict],
+    ):
+        """
+        Initializes the Drawer class.
 
-    for segment in wall_segments:
-        # Extract individual wall mask
-        mask = segmentation_map == segment["id"]
+        Parameters:
+            image (Image.Image): Original input image.
+            segmentation (torch.Tensor): Segmentation map with segment IDs.
+            label_dict (Dict[int, str]): Dictionary mapping label IDs to label names.
+            segments_info (List[Dict]): List of dictionaries with segment metadata.
+        """
+        self.image = np.array(image) if isinstance(image, Image.Image) else image
+        self.segmentation = segmentation
+        self.label_dict = label_dict
+        self.segments_info = segments_info
 
-        # Create a black image
-        black_image = np.zeros_like(image)
+    def draw_panoptic_segmentation(self):
+        """
+        Visualizes the panoptic segmentation results, including a legend for each segment.
+        """
+        viridis = cm.get_cmap("viridis", int(torch.max(self.segmentation).item()) + 1)
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.imshow(self.segmentation, cmap=viridis)
+        instances_counter = defaultdict(int)
+        handles = []
 
-        # Apply mask to the original image
-        masked_image = black_image.copy()
-        masked_image[mask] = image[mask]
+        for segment in self.segments_info:
+            segment_id = segment["id"]
+            segment_label_id = segment["label_id"]
+            segment_label = self.label_dict.get(segment_label_id, f"Unknown-{segment_label_id}")
+            label = f"{segment_label}-{instances_counter[segment_label_id]}"
+            instances_counter[segment_label_id] += 1
+            color = viridis(segment_id / torch.max(self.segmentation).item())
+            handles.append(mpatches.Patch(color=color, label=label))
 
-        # Append the masked image to the list
-        wall_images.append(masked_image)
+        ax.legend(handles=handles, loc="upper right", bbox_to_anchor=(1.35, 1))
+        ax.axis("off")
+        plt.title("Panoptic Segmentation Visualization")
+        plt.show()
 
-    return wall_images
+    def get_wall_segment_images(self, wall_segments: List[Dict]) -> List[np.ndarray]:
+        """
+        Extracts individual wall segment images with all other parts blacked out.
+
+        Parameters:
+            wall_segments (List[Dict]): List of wall segment dictionaries.
+
+        Returns:
+            List[np.ndarray]: List of masked images for each wall segment.
+        """
+        wall_images = []
+
+        for segment in wall_segments:
+            mask = self.segmentation == segment["id"]
+            black_image = np.zeros_like(self.image)
+            masked_image = black_image.copy()
+            masked_image[mask] = self.image[mask]
+            wall_images.append(masked_image)
+
+        return wall_images
