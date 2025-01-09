@@ -111,6 +111,6 @@ def main(image_path: str, model_name: str):
 
 if __name__ == "__main__":
     main(
-        image_path="../Bathroom/B4.jpg",
+        image_path="../Bathroom/B3.jpg",
         model_name="facebook/mask2former-swin-base-coco-panoptic",
     )

@@ -59,7 +59,6 @@ class DetectronInference:
             raise FileNotFoundError("Configuration or weights file not found.") from e
         except Exception as e:
             raise RuntimeError(f"An error occurred while loading the predictor: {e}") from e
-    #add function of adding oringal image
     def run_detectron(self):
         """
         Runs Detectron2 on wall segment images, visualizes predictions with 
@@ -80,7 +79,7 @@ class DetectronInference:
 
             # Overlay each mask 
             for mask, label in zip(masks, labels):
-=                random_color = np.array([random.randint(0, 255) for _ in range(3)], dtype=np.uint8)
+                random_color = np.array([random.randint(0, 255) for _ in range(3)], dtype=np.uint8)
                 visualization_image[mask] = (0.7 * visualization_image[mask] + 0.3 * random_color).astype(np.uint8)
 
                 coords = np.column_stack(np.where(mask))
